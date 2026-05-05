@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isBarber() {
+      return signedIn() && userDocExists() && userRole() == 'barber';
+    }
+
+    function isShopOwner() {
+      return signedIn() && userDocExists() && userRole() == 'shopOwner';
+    }
+
+    function isCustomer() {
+      return signedIn() && userDocExists() && userRole() == 'customer';
+    }
+
+    function barberIsApproved(barberId) {
+      return exists(/databases/$(database)/documents/barbers/$(barberId))
+        && get(/databases/$(database)/documents/barbers/$(barberId)).data.verificationStatus == 'approved';
+    }
+
+    function shopOwnedByMe(shopId) {
+      return exists(/databases/$(database)/documents/shops/$(shopId))
+        && get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid;
+    }
+
+    function barberIsAdminInShop(shopId) {
+      let shop = get(/databases/$(database)/documents/shops/$(shopId)).data;
+      return exists(/databases/$(database)/documents/shops/$(shopId))
+        && shop.barbers is list
+        && shop.barbers.size() > 0
+        && shop.barbers.filter(b, b.barberId == request.auth.uid && b.isAdmin == true).size() > 0;
+    }
+
+    function isApprovedBarber() {
+      return isBarber() && barberIsApproved(request.auth.uid);
+    }
+
+    function rootCredentialUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['passwordHash', 'passwordSalt']);
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasAll(['username', 'email', 'role', 'isPremium'])
+        && request.resource.data.username is string
+        && request.resource.data.email is string
+        && request.resource.data.role in ['barber', 'customer', 'shopOwner']
+        && request.resource.data.isPremium is bool;
+      // Clients cannot escalate role or directly tamper with XP/loyalty.
+      allow update: if isSelf(uid)
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.xp == resource.data.xp
+        && request.resource.data.loyaltyRank == resource.data.loyaltyRank
+        && rootCredentialUnchanged();
+      allow delete: if false;
+
+      // Server-only password material (Cloud Functions / Admin SDK).
+      match /auth_private/{docId} {
+        allow read, write: if false;
+      }
+
+      // `users/{uid}/suki_stats/{barberId}` updates must be server-side (Cloud Functions).
+      match /suki_stats/{barberId} {
+        allow read: if isSelf(uid);
+        allow write: if false;
+      }
+    }
+
+    // Single-document username resolution for pre-auth flows (listing blocked).
+    // Abuse throttling metadata (Cloud Functions Admin SDK only).
+    match /security_rate_limits/{id} {
+      allow read, write: if false;
+    }
+
+    match /username_index/{uname} {
+      allow get: if true;
+      allow list: if false;
+      // Public index: only routing fields (never password hashes).
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'email'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email is string;
+      allow update: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'email'])
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Global barbers registry (multi-shop).
+    // barbers/{barberId}: { shopId, name, verificationStatus, gcashQrUrl, reliabilityScore, phoneNumber? }
+    match /barbers/{barberId} {
+      allow read: if signedIn();
+      // Barber can update their own non-sensitive fields after approval process,
+      // but never their verificationStatus or reliabilityScore.
+      allow update: if isSelf(barberId)
+        && request.resource.data.verificationStatus == resource.data.verificationStatus
+        && request.resource.data.reliabilityScore == resource.data.reliabilityScore;
+      // Only shop owner can create/delete barbers under their own shop.
+      allow create: if isShopOwner()
+        && request.resource.data.shopId is string
+        && shopOwnedByMe(request.resource.data.shopId);
+      allow delete: if isShopOwner() && shopOwnedByMe(resource.data.shopId);
+    }
+
+    match /shops/{shopId} {
+      allow read: if signedIn();
+      // Only shop owners can manage their shop document.
+      allow create: if isShopOwner()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasAll(['name', 'ownerId', 'address', 'totalRevenue']);
+      // Shop owner or barber admin can update their shop, including barbers array
+      allow update: if (isShopOwner() && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId)
+        || barberIsAdminInShop(shopId);
+      allow delete: if false;
+
+      match /queue/{ticketId} {
+        allow read: if signedIn();
+        allow create: if isCustomer()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.keys().hasAll(['userId', 'username', 'isPremium', 'joinedAt']);
+        // Customers can cancel their own ticket; approved barbers can manage queue flow.
+        allow update, delete: if (isCustomer() && resource.data.userId == request.auth.uid)
+          || isApprovedBarber();
+      }
+
+      // Barber-direct handshake + server-authoritative payment confirmation.
+      // shops/{shopId}/services/{serviceId}
+      match /services/{serviceId} {
+        allow read: if signedIn();
+
+        // Create a service: approved barber or shop owner.
+        allow create: if (isApprovedBarber() || isShopOwner())
+          && request.resource.data.keys().hasAll(['shopId', 'barberId', 'customerId', 'amount', 'status', 'createdAt'])
+          && request.resource.data.shopId == shopId;
+
+        // Update (field-level):
+        // - customer can only transition to payment_sent and set paymentSentAt
+        // - barber can only confirm by setting paymentConfirmedAt / status
+        // - shopOwner can update within their own shop
+        allow update: if signedIn() && (
+          (isCustomer() && resource.data.customerId == request.auth.uid
+            && request.resource.data.barberId == resource.data.barberId
+            && request.resource.data.customerId == resource.data.customerId
+            && request.resource.data.amount == resource.data.amount
+            && request.resource.data.paymentConfirmedAt == resource.data.paymentConfirmedAt
+          )
+          ||
+          (isApprovedBarber() && resource.data.barberId == request.auth.uid
+            && request.resource.data.barberId == resource.data.barberId
+            && request.resource.data.customerId == resource.data.customerId
+            && request.resource.data.amount == resource.data.amount
+          )
+          ||
+          (isShopOwner() && shopOwnedByMe(shopId))
+        );
+
+        allow delete: if false;
+      }
+    }
+
+    // Audit logs - Cloud Functions write only, admin/users can read own logs
+    match /audit_logs/{logId} {
+      // Clients cannot create/modify audit logs directly
+      allow create, update, delete: if false;
+      
+      // Users can read their own audit logs
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.email == request.auth.token.email
+      );
+    }
+
+    // Security alerts - Cloud Functions write only, admins can read
+    match /security_alerts/{alertId} {
+      // Clients cannot create/modify security alerts
+      allow create, update, delete: if false;
+      
+      // Only admins can read security alerts
+      allow read: if signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+  }
+}

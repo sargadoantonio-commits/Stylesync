@@ -1,0 +1,6 @@
+# Pubspec overrides to work around build issues
+# This overrides packages to disable problematic native asset builds
+
+dependency_overrides:
+  objective_c:
+    version: '<9.0.0'

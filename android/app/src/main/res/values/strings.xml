@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StyleSync</string>
+
+    <!-- Facebook OAuth Configuration -->
+    <string name="facebook_app_id">YOUR_FACEBOOK_APP_ID</string>
+    <string name="facebook_client_token">YOUR_FACEBOOK_CLIENT_TOKEN</string>
+
+    <!-- Google OAuth Configuration -->
+    <string name="default_web_client_id">85409570157-sr7384sdkip4m10rqs03fmuq2hf507lc.apps.googleusercontent.com</string>
+</resources>
