@@ -6,6 +6,7 @@ class AppTheme {
   static ThemeData get darkTheme => ThemeData(
         brightness: Brightness.dark,
         useMaterial3: true,
+        splashFactory: InkRipple.splashFactory,
         fontFamily: 'Inter',
         scaffoldBackgroundColor: AppColors.kBg,
         colorScheme: const ColorScheme.dark(

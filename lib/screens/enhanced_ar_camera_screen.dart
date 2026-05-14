@@ -761,5 +761,3 @@ class _ARHairstyleOverlayPainter extends CustomPainter {
         oldDelegate.face.boundingBox != face.boundingBox;
   }
 }
-
-import 'dart:ui' as ui;

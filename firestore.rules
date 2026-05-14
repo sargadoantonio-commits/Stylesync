@@ -41,11 +41,15 @@ service cloud.firestore {
     }
 
     function barberIsAdminInShop(shopId) {
-      let shop = get(/databases/$(database)/documents/shops/$(shopId)).data;
-      return exists(/databases/$(database)/documents/shops/$(shopId))
-        && shop.barbers is list
-        && shop.barbers.size() > 0
-        && shop.barbers.filter(b, b.barberId == request.auth.uid && b.isAdmin == true).size() > 0;
+      let shopRef = /databases/$(database)/documents/shops/$(shopId);
+      // Conservative check: treat requester as shop-level admin if they are a platform admin
+      // or if they are the shop owner. This avoids unsupported list/lambda usage in rules.
+      return exists(shopRef) && (
+        // Platform-level admin flag on user's document
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+        // Or the shop owner
+        || get(shopRef).data.ownerId == request.auth.uid
+      );
     }
 
     function isApprovedBarber() {
@@ -198,6 +202,34 @@ service cloud.firestore {
       
       // Only admins can read security alerts
       allow read: if signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Bookings collection: allow owners, related barbers, shop owners, and admins to read.
+    // Customers can create their own bookings.
+    match /bookings/{bookingId} {
+      // Read a booking if the requester is an admin, the customer, the assigned barber,
+      // an approved barber, or the shop owner for the booking's shop.
+      allow read: if signedIn() && (
+        // Platform admin
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+        // Owner of the booking (customer)
+        || resource.data.customerId == request.auth.uid
+        // Assigned barber
+        || resource.data.barberId == request.auth.uid
+        // Approved barber (global)
+        || isApprovedBarber()
+        // Shop owner or barber admin within the shop
+        || shopOwnedByMe(resource.data.shopId)
+        || barberIsAdminInShop(resource.data.shopId)
+      );
+
+      // Create: allow customers to create their own booking documents.
+      allow create: if isCustomer()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.keys().hasAll(['customerId', 'shopId', 'barberId', 'status', 'createdAt']);
+
+      // Updates/deletes are restricted to server or approved barber/shop owner flows
+      allow update, delete: if false;
     }
   }
 }

@@ -507,11 +507,11 @@ class AuthRepository {
           scopes: ['email', 'profile'],
         );
       } else {
-        // Android/native configuration - use serverClientId
+        // Android/native configuration
+        // Note: Don't use serverClientId for Google Sign-In on Android; it can cause
+        // Api10 errors due to mismatched OAuth credentials. Let Play Services handle auth.
         googleSignIn = GoogleSignIn(
           scopes: ['email', 'profile'],
-          serverClientId: OAuthConfig.googleAndroidClientId,
-          forceCodeForRefreshToken: true,
         );
       }
 
