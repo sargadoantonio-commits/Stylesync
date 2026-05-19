@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../models/hairstyle_training_data.dart';
-import '../../../services/hairstyle_training_data_service.dart';
-import '../../../services/ar_hairstyle_recommendation_service.dart';
+import '../../../../models/hairstyle_training_data.dart';
+import '../../../../services/hairstyle_training_data_service.dart';
+import '../../../../services/ar_hairstyle_recommendation_service.dart';
 
 /// Provider for hairstyle training data service
 final hairstyleTrainingDataProvider =

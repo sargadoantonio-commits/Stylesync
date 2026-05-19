@@ -11,6 +11,7 @@ import "../../../core/theme/app_typography.dart";
 import "../../../widgets/queue_card.dart";
 import "../../auth/presentation/providers/auth_providers.dart";
 import "queue_providers.dart";
+import '../../shop/presentation/providers/shop_providers.dart';
 
 /// Displays the live barber queue with premium priority indicators,
 /// accessibility semantics, and inline guidance for first-time users.
@@ -25,22 +26,59 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   Future<void> _join() async {
     final user = ref.read(firebaseAuthProvider).currentUser;
     final profile = ref.read(userProfileProvider).valueOrNull;
-    if (user == null || profile == null) return;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please sign in to join the queue'),
+      ));
+      return;
+    }
+
+    if (profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Profile not loaded yet. Try again shortly.'),
+      ));
+      return;
+    }
+
     final shopId = ref.read(defaultShopIdProvider);
+    if (shopId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No shop selected. Please select a shop first.'),
+      ));
+      return;
+    }
 
     try {
       HapticFeedback.mediumImpact();
-      await ref.read(queueRepositoryProvider).joinQueue(
+      // Debug logging to help diagnose permission failures in emulator.
+      // These prints appear in device logcat.
+      debugPrint('[Queue] Attempting join: uid=${user.uid}, username=${profile.username}, isPremium=${profile.isPremium}, shopId=$shopId');
+      final ticketId = await ref.read(queueRepositoryProvider).joinQueue(
             shopId: shopId,
             userId: user.uid,
-            username: profile.username,
+            username: profile.username.isNotEmpty ? profile.username : profile.displayName ?? 'Guest',
             isPremium: profile.isPremium,
           );
-    } on FirebaseException {
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(AppStrings.networkRetry)),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You have been added to the queue'),
+        ));
+      }
+      // Optionally, we could navigate or update local cached ticket providers here.
+    } on FirebaseException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.message ?? 'Failed to join queue'),
+          backgroundColor: AppColors.kDanger,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Unexpected error: $e'),
+          backgroundColor: AppColors.kDanger,
+        ));
       }
     }
   }
@@ -53,6 +91,9 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   @override
   Widget build(BuildContext context) {
     final shopId = ref.watch(defaultShopIdProvider);
+    final profile = ref.watch(userProfileProvider).valueOrNull;
+    final selectedShop = ref.watch(selectedShopProvider);
+    final isShopOwner = selectedShop != null && profile != null && (profile.uid == selectedShop.ownerId || profile.isAdmin == true);
     final queueAsync = ref.watch(queueSnapshotProvider);
     final uid = ref.watch(firebaseAuthProvider).currentUser?.uid;
 
@@ -133,28 +174,82 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
           SliverToBoxAdapter(
             child: Container(
               color: AppColors.deepNavy,
-              child: queueAsync.when(
-                data: (snap) {
-                  final docs = snap.docs;
-                  if (docs.isEmpty) {
-                    return _buildEmptyState();
-                  }
-
-                  return Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: QueueCard(
-                          title: "Live barber queue",
-                          subtitle:
-                              "Premium people get priority, but you still keep your place inside the same lane.",
-                          statusLabel: AppStrings.bookNow,
-                          actionLabel: AppStrings.joinQueue,
-                          isPremium: false,
-                          onAction: _join,
-                        ),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: QueueCard(
+                      title: "Live barber queue",
+                      subtitle:
+                          "Premium people get priority, but you still keep your place inside the same lane.",
+                      statusLabel: AppStrings.bookNow,
+                      actionLabel: AppStrings.joinQueue,
+                      isPremium: false,
+                      onAction: _join,
+                    ),
+                  ),
+ 
+                  // Owner controls: Call Next / Mark Served
+                  if (isShopOwner)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () async {
+                                final calledId = await ref.read(queueRepositoryProvider).callNext(shopId);
+                                if (calledId == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No tickets in queue')));
+                                  return;
+                                }
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Called next customer')));
+                              },
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.accentMagenta),
+                              child: Text('Call Next', style: AppTypography.interBody(14).copyWith(color: AppColors.white)),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final shopRef = ref.read(queueRepositoryProvider);
+                                final shop = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
+                                final current = shop.data()?['currentServingTicketId'] as String?;
+                                if (current == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No customer currently called')));
+                                  return;
+                                }
+                                await shopRef.leaveQueue(shopId, current);
+                                await shopRef.clearCurrentServing(shopId);
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Marked served')));
+                              },
+                              style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.kBorder)),
+                              child: Text('Mark Served', style: AppTypography.interBody(14).copyWith(color: AppColors.white)),
+                            ),
+                          ),
+                        ],
                       ),
-                      ListView.separated(
+                    ),
+                  queueAsync.when(
+                    data: (snap) {
+                      final docs = snap.docs;
+                      if (docs.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 24),
+                              Text('No one is currently in queue',
+                                  style: AppTypography.interBody(14)
+                                      .copyWith(color: AppColors.textMuted)),
+                              const SizedBox(height: 12),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return ListView.separated(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
@@ -162,46 +257,42 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
                           final doc = docs[index];
-                          final data = doc.data();
-                          final name = data["username"] as String? ?? "Guest";
-                          final premium = data["isPremium"] as bool? ?? false;
-                          final isSelf = data["userId"] == uid;
-                          final aheadCount = docs.where((other) {
-                            final otherData = other.data();
-                            final otherIndex =
-                                (otherData["queueIndex"] as num?)?.toInt() ?? 0;
-                            final currentIndex =
-                                (data["queueIndex"] as num?)?.toInt() ?? 0;
-                            return otherIndex < currentIndex;
-                          }).length;
+                          final data = doc.data() as Map<String, dynamic>;
+                          final name = data['username'] as String? ?? 'Guest';
+                          final premium = data['isPremium'] as bool? ?? false;
+                          final userId = data['userId'] as String? ?? '';
+                          final isSelf = userId == uid;
+                          final aheadCount = index;
 
                           return QueueCard(
                             title:
-                                "#${index + 1} ${premium ? "Premium" : "Standard"}",
+                                '#${index + 1} ${premium ? "Premium" : "Standard"}',
                             subtitle: name,
                             statusLabel: aheadCount == 0
                                 ? AppStrings.liveNow
-                                : "$aheadCount ahead of this spot",
+                                : '$aheadCount ahead of this spot',
                             isLive: aheadCount == 0,
                             isPremium: premium,
-                            actionLabel: isSelf ? "Leave queue" : null,
-                            onAction:
-                                isSelf ? () => _leave(shopId, doc.id) : null,
+                            actionLabel: isSelf ? 'Leave queue' : null,
+                            onAction: isSelf
+                                ? () => _leave(shopId, doc.id)
+                                : null,
                           );
                         },
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  );
-                },
-                loading: () => _buildShimmer(context),
-                error: (error, _) {
-                  return Center(
-                    child: Text(AppStrings.networkRetry,
-                        style: AppTypography.interBody(14)
-                            .copyWith(color: AppColors.white)),
-                  );
-                },
+                      );
+                    },
+                    loading: () => const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(child: CircularProgressIndicator())),
+                    error: (e, st) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text('Failed to load queue: $e',
+                          style: AppTypography.interBody(14)
+                              .copyWith(color: AppColors.kMuted)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
               ),
             ),
           ),

@@ -56,8 +56,8 @@ class _QueueCardState extends State<QueueCard>
   @override
   Widget build(BuildContext context) {
     final themeColor = widget.isPremium
-        ? AppColors.accentRed
-        : AppColors.accentRed.withValues(alpha: 0.7);
+      ? AppColors.accentCyan
+      : AppColors.accentCyan.withValues(alpha: 0.7);
     final card = Container(
       constraints: const BoxConstraints(minHeight: 120),
       decoration: BoxDecoration(
@@ -118,16 +118,16 @@ class _QueueCardState extends State<QueueCard>
               if (widget.isLive)
                 Semantics(
                   label: 'Live booking available',
-                  child: Container(
+                    child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: AppColors.accentRed,
+                      color: AppColors.accentCyan,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       "LIVE",
-                      style:
+                        style:
                           AppTypography.interBody(11, weight: FontWeight.w700)
                               .copyWith(color: AppColors.white),
                     ),
@@ -181,15 +181,15 @@ class _QueueCardState extends State<QueueCard>
                         widget.onCancel?.call();
                       },
                       style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                            color: AppColors.accentRed.withValues(alpha: 0.8)),
+                      side: BorderSide(
+                        color: AppColors.accentCyan.withValues(alpha: 0.8)),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
                       child: Text("Cancel",
-                          style: AppTypography.interBody(15,
-                                  weight: FontWeight.w600)
-                              .copyWith(color: AppColors.accentRed)),
+                        style: AppTypography.interBody(15,
+                            weight: FontWeight.w600)
+                          .copyWith(color: AppColors.accentCyan)),
                     ),
                   ),
                 ),

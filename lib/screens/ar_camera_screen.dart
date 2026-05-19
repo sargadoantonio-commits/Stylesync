@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'dart:io' show Platform;
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:stylesync/core/theme/app_colors.dart';
 import 'package:go_router/go_router.dart';
@@ -50,16 +51,49 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
         orElse: () => cameras.first,
       );
 
-      _cameraController = CameraController(
-        front,
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
+      // Try multiple presets/formats to avoid CameraX initialization errors
+      final presets = [ResolutionPreset.high, ResolutionPreset.medium, ResolutionPreset.low];
+        final formats = Platform.isAndroid
+          ? <ImageFormatGroup?>[null, ImageFormatGroup.yuv420, ImageFormatGroup.nv21, ImageFormatGroup.unknown]
+          : <ImageFormatGroup?>[null, ImageFormatGroup.bgra8888, ImageFormatGroup.unknown];
 
-      await _cameraController!.initialize();
-      _startFaceDetection();
+      Exception? lastError;
+      for (final preset in presets) {
+        for (final fmt in formats) {
+          try {
+            if (fmt == null) {
+              _cameraController = CameraController(
+                front,
+                preset,
+                enableAudio: false,
+              );
+            } else {
+              _cameraController = CameraController(
+                front,
+                preset,
+                enableAudio: false,
+                imageFormatGroup: fmt,
+              );
+            }
+            await _cameraController!.initialize();
+            _startFaceDetection();
+            if (mounted) setState(() {});
+            lastError = null;
+            break;
+          } catch (e) {
+            lastError = e as Exception? ?? Exception(e.toString());
+            debugPrint('Camera init attempt failed (preset=$preset, fmt=$fmt): $e');
+            try {
+              await _cameraController?.dispose();
+            } catch (_) {}
+          }
+        }
+        if (lastError == null) break;
+      }
 
-      if (mounted) setState(() {});
+      if (lastError != null) {
+        throw lastError;
+      }
     } catch (e) {
       print('Camera init error: $e');
       if (mounted) {

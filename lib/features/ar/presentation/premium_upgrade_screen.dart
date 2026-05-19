@@ -1,17 +1,28 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/glass_card.dart';
+import 'pricing_card.dart';
 
 /// Premium upgrade screen shown when users reach AR limit
-class PremiumUpgradeScreen extends ConsumerWidget {
+class PremiumUpgradeScreen extends ConsumerStatefulWidget {
   const PremiumUpgradeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PremiumUpgradeScreen> createState() =>
+      _PremiumUpgradeScreenState();
+}
+
+class _PremiumUpgradeScreenState extends ConsumerState<PremiumUpgradeScreen> {
+  String? _loadingTier;
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -74,181 +85,41 @@ class PremiumUpgradeScreen extends ConsumerWidget {
               'Pricing Plans',
               style: AppTypography.orbitronHeading(18),
             ),
+            const SizedBox(height: 8),
             const SizedBox(height: 16),
 
-            // Monthly Plan
-            GlassCard(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Monthly Plan',
-                              style: AppTypography.interBody(14,
-                                  weight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Perfect for trying styles',
-                              style: AppTypography.interBody(12)
-                                  .copyWith(color: AppColors.textMuted),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color:
-                                AppColors.accentMagenta.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '₱99',
-                            style: AppTypography.interBody(16,
-                                    weight: FontWeight.bold)
-                                .copyWith(color: AppColors.accentMagenta),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildFeatureItem('Unlimited AR Try-Ons'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Access to 50+ Styles'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Save Favorites'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Ad-Free Experience'),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => _showComingSoonDialog(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accentMagenta,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Subscribe Monthly'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            PricingCard(
+              title: 'Monthly Plan',
+              subtitle: 'Perfect for trying styles',
+              price: '₱99',
+              features: const [
+                'Unlimited AR Try-Ons',
+                'Access to 50+ Styles',
+                'Save Favorites',
+                'Ad-Free Experience',
+              ],
+              buttonText: 'Subscribe Monthly',
+              accentColor: AppColors.accentMagenta,
+              loading: _loadingTier == 'monthly',
+              onPressed: () => _startSubscription(context, tier: 'monthly'),
             ),
             const SizedBox(height: 16),
 
-            // Yearly Plan
-            GlassCard(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Yearly Plan',
-                                  style: AppTypography.interBody(14,
-                                      weight: FontWeight.w600),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.accentCyan
-                                        .withValues(alpha: 0.3),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    'Save 17%',
-                                    style: AppTypography.interBody(10)
-                                        .copyWith(color: AppColors.accentCyan),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Best value for style lovers',
-                              style: AppTypography.interBody(12)
-                                  .copyWith(color: AppColors.textMuted),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: AppColors.accentCyan.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '₱988',
-                                style: AppTypography.interBody(14,
-                                        weight: FontWeight.bold)
-                                    .copyWith(color: AppColors.accentCyan),
-                              ),
-                              Text(
-                                '₱82/mo',
-                                style: AppTypography.interBody(10)
-                                    .copyWith(color: AppColors.textMuted),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildFeatureItem('Unlimited AR Try-Ons'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Access to 50+ Styles'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Save Favorites'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Ad-Free Experience'),
-                    const SizedBox(height: 8),
-                    _buildFeatureItem('Priority Support'),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => _showComingSoonDialog(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accentCyan,
-                          foregroundColor: AppColors.background,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Subscribe Yearly'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            PricingCard(
+              title: 'Yearly Plan',
+              subtitle: 'Best value for style lovers',
+              price: '₱988\n₱82/mo',
+              features: const [
+                'Unlimited AR Try-Ons',
+                'Access to 50+ Styles',
+                'Save Favorites',
+                'Ad-Free Experience',
+                'Priority Support',
+              ],
+              buttonText: 'Subscribe Yearly',
+              accentColor: AppColors.accentCyan,
+              loading: _loadingTier == 'yearly',
+              onPressed: () => _startSubscription(context, tier: 'yearly'),
             ),
             const SizedBox(height: 40),
 
@@ -265,7 +136,7 @@ class PremiumUpgradeScreen extends ConsumerWidget {
             const SizedBox(height: 12),
             _buildFaqItem(
               'What payment methods accepted?',
-              'We accept GCash, credit cards, debit cards, and PayPal.',
+              'Stripe Checkout shows the payment methods available for your region and card network.',
             ),
             const SizedBox(height: 12),
             _buildFaqItem(
@@ -300,23 +171,6 @@ class PremiumUpgradeScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildFeatureItem(String feature) {
-    return Row(
-      children: [
-        const Icon(
-          Icons.check_circle_rounded,
-          size: 18,
-          color: AppColors.accentCyan,
-        ),
-        const SizedBox(width: 12),
-        Text(
-          feature,
-          style: AppTypography.interBody(13),
-        ),
-      ],
-    );
-  }
-
   Widget _buildFaqItem(String question, String answer) {
     return GlassCard(
       child: Padding(
@@ -340,26 +194,113 @@ class PremiumUpgradeScreen extends ConsumerWidget {
     );
   }
 
-  void _showComingSoonDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: Text(
-          'Coming Soon',
-          style: AppTypography.orbitronHeading(16),
-        ),
-        content: Text(
-          'Payment processing is coming in the next update. Follow our news for launch date!',
-          style: AppTypography.interBody(13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Got It'),
+  Future<void> _startSubscription(
+    BuildContext context, {
+    required String tier,
+  }) async {
+    setState(() {
+      _loadingTier = tier;
+    });
+
+    try {
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('createPremiumSubscription');
+      final response = await callable.call(<String, dynamic>{'tier': tier});
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final redirectUrl = data['redirectUrl'] as String?;
+      final status = data['status'] as String? ?? 'unknown';
+
+      if (!context.mounted) return;
+
+      if (redirectUrl != null && redirectUrl.isNotEmpty) {
+        final uri = Uri.parse(redirectUrl);
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+
+      if (!context.mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: Text(
+            status == 'active' ? 'Premium Activated' : 'Complete Payment',
+            style: AppTypography.orbitronHeading(16),
           ),
-        ],
-      ),
-    );
+          content: Text(
+            status == 'active'
+                ? 'Your subscription is active. Premium access is ready now.'
+                : 'Finish the checkout in your browser, then tap Check Status so the app can unlock premium features.',
+            style: AppTypography.interBody(13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Later'),
+            ),
+            if (status != 'active')
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(dialogContext);
+                  await _refreshSubscriptionStatus(context);
+                },
+                child: const Text('Check Status'),
+              ),
+          ],
+        ),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Checkout failed.')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Checkout failed. Please try again.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingTier = null;
+        });
+      }
+    }
   }
+
+  Future<void> _refreshSubscriptionStatus(BuildContext context) async {
+    try {
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('refreshPremiumSubscription');
+      final response = await callable.call();
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final status = data['status'] as String? ?? 'unknown';
+
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            status == 'active'
+                ? 'Premium is now active.'
+                : 'Subscription status is $status. Try again after completing payment.',
+          ),
+        ),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text(error.message ?? 'Unable to check subscription status.')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to check subscription status.')),
+      );
+    }
+  }
+
 }

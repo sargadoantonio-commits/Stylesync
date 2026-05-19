@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show InternetAddress;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

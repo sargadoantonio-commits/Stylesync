@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/offline_sync_queue.dart';
 import '../providers/offline_connectivity_provider.dart';
-import '../../../../shared/constants/app_colors.dart';
-import '../../../../shared/constants/app_typography.dart';
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_typography.dart';
 
 /// Test screen for offline mode functionality
 class OfflineModeTestScreen extends ConsumerStatefulWidget {

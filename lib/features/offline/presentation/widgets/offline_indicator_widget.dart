@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/offline_connectivity_provider.dart';
-import '../../../shared/constants/app_colors.dart';
-import '../../../shared/constants/app_typography.dart';
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_typography.dart';
 
 /// Floating badge showing offline status and pending sync items
 class OfflineIndicatorWidget extends ConsumerWidget {

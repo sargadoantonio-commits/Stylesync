@@ -87,5 +87,5 @@ final incrementArUsageProvider =
   await repository.incrementUsage(userId);
 
   // Refresh usage data
-  ref.refresh(arUsageProvider);
+  ref.invalidate(arUsageProvider);
 });

@@ -1,11 +1,14 @@
 import "dart:async";
 
 import "package:cloud_firestore/cloud_firestore.dart";
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import "package:firebase_app_check/firebase_app_check.dart";
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_crashlytics/firebase_crashlytics.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/widgets.dart";
+import 'platform_stub.dart' if (dart.library.io) 'platform_io.dart';
 
 import "package:stylesync/firebase_options.dart";
 
@@ -35,14 +38,21 @@ Future<void> bootstrapFirebase() async {
   // Skip emulator connections in profile/release modes
   if (kDebugMode) {
     try {
-      // DISABLED - Using real Firebase project for now
-      // await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
-      // FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
-      // FirebaseFunctions.instance.useFunctionsEmulator('localhost', 5001);
-      // debugPrint("[StyleSync] Connected to Firebase emulators");
-      debugPrint("[StyleSync] Using production Firebase");
+      // Allow overriding the emulator host via `--dart-define=EMULATOR_HOST=...`
+      // Useful when running the app in third-party Android emulators (BlueStacks)
+      // where the usual 10.0.2.2 mapping may not work. Fallback to the
+      // Android emulator host (10.0.2.2) or localhost.
+      final envHost = const String.fromEnvironment('EMULATOR_HOST');
+      final defaultHost = isAndroid ? '10.0.2.2' : 'localhost';
+      final emulatorHost = envHost.isNotEmpty ? envHost : defaultHost;
+
+      // Connect to local emulators for development
+      await FirebaseAuth.instance.useAuthEmulator(emulatorHost, 9909);
+      FirebaseFirestore.instance.useFirestoreEmulator(emulatorHost, 8080);
+      FirebaseFunctions.instance.useFunctionsEmulator(emulatorHost, 5002);
+      debugPrint('[StyleSync] Connected to Firebase emulators at $emulatorHost');
     } catch (e) {
-      debugPrint("[StyleSync] Firebase emulators not available (connecting to production): $e");
+      debugPrint('[StyleSync] Firebase emulators not available (connecting to production): $e');
       // If emulators aren't running, it will just use production Firebase
     }
   }
@@ -53,6 +63,11 @@ Future<void> bootstrapFirebase() async {
 
 Future<void> _activateAppCheck() async {
   try {
+    if (kDebugMode) {
+      debugPrint('[StyleSync] App Check disabled in debug mode for local testing.');
+      return;
+    }
+
     if (kIsWeb) {
       const webKey = String.fromEnvironment("FIREBASE_APP_CHECK_SITE_KEY");
       if (webKey.isEmpty) {

@@ -171,7 +171,7 @@ class _AdminPanelState extends ConsumerState<AdminPanel> {
                       final isAdmin = data['isAdmin'] as bool? ?? false;
 
                       return Card(
-                        color: AppColors.cardBg,
+                        color: AppColors.card,
                         child: ListTile(
                           leading: CircleAvatar(child: Text(email.toString().isNotEmpty ? email[0].toUpperCase() : '?')), 
                           title: Text(email, style: AppTypography.interBody(14)),

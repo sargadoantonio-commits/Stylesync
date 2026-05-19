@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "stripe": {
+      "command": "npx",
+      "args": ["-y", "@stripe/mcp@latest"],
+      "env": {
+        "STRIPE_SECRET_KEY": "sk_test_51TXqupRqiEBNZEiLY9rg8FCevcRCsigJKhEPlQQ51C9iUuY3PNk7vys1yjdk4SWjjz0Ux5iys7KWVhehoZPyiybU000zC0VuNO"
+      }
+    }
+  }
+}

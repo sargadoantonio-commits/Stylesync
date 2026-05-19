@@ -1,6 +1,8 @@
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
+import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
+import Stripe from 'stripe';
 
 initializeApp();
 
@@ -20,6 +22,8 @@ function logFunctionError(functionName: string, error: unknown, userId?: string)
 
 type LoyaltyRank = "rookie" | "regular" | "elite" | "legend";
 
+type PremiumTier = "monthly" | "yearly";
+
 function computeRank(xp: number): LoyaltyRank {
   if (xp >= 5000) return "legend";
   if (xp >= 2000) return "elite";
@@ -32,6 +36,253 @@ function computeXpDelta(amountPeso: number): number {
   const delta = Math.floor(amountPeso / 10);
   return Math.max(10, Math.min(250, delta));
 }
+
+async function getStripePlanPayload(db: FirebaseFirestore.Firestore, tier: PremiumTier): Promise<{
+  price_id?: string;
+}> {
+  const envPriceName = tier === 'yearly' ? 'STRIPE_YEARLY_PRICE_ID' : 'STRIPE_MONTHLY_PRICE_ID';
+  const priceId = process.env[envPriceName]?.trim();
+  if (priceId) return { price_id: priceId };
+
+  try {
+    const doc = await db.collection('plans').doc(tier).get();
+    if (doc.exists) {
+      const data = doc.data() as any;
+      if (data.stripe_price_id) return { price_id: String(data.stripe_price_id) };
+      if (data.price_id) return { price_id: String(data.price_id) };
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return {};
+}
+
+function requireStripeSecret(): string {
+  const secret = process.env.STRIPE_SECRET_KEY?.trim();
+  if (!secret) {
+    throw new HttpsError('failed-precondition', 'Stripe is not configured. Set STRIPE_SECRET_KEY in Functions environment variables.');
+  }
+  return secret;
+}
+
+async function createStripeCheckoutSession(uid: string, tier: PremiumTier): Promise<{
+  sessionId?: string;
+  url?: string;
+  status: string;
+}> {
+  const db = getFirestore();
+  const userRef = db.collection('users').doc(uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.exists) {
+    throw new HttpsError('not-found', 'User profile not found.');
+  }
+
+  const email = String(userSnap.get('email') ?? '').trim().toLowerCase();
+  const displayName = String(userSnap.get('displayName') ?? userSnap.get('username') ?? 'StyleSync User').trim();
+  if (!email) {
+    throw new HttpsError('failed-precondition', 'A profile email is required before creating a Stripe subscription.');
+  }
+
+  const stripeSecret = requireStripeSecret();
+  const stripe = new Stripe(stripeSecret, { apiVersion: '2022-11-15' });
+
+  const planPayload = await getStripePlanPayload(db, tier);
+  if (!planPayload.price_id) {
+    throw new HttpsError('failed-precondition', 'No Stripe price ID configured for this tier.');
+  }
+
+  // Create a Checkout Session for subscription
+  const successUrl = process.env.STRIPE_SUCCESS_URL ?? 'https://example.com/success?session_id={CHECKOUT_SESSION_ID}';
+  const cancelUrl = process.env.STRIPE_CANCEL_URL ?? 'https://example.com/cancel';
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    payment_method_types: ['card'],
+    customer_email: email,
+    line_items: [
+      { price: planPayload.price_id, quantity: 1 },
+    ],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    metadata: {
+      stylesync_uid: uid,
+      subscription_tier: tier,
+    },
+  });
+
+  // Persist minimal session info so client can check status later
+  await userRef.set(
+    {
+      stripeCheckoutSessionId: session.id,
+      stripeCheckoutUrl: session.url ?? null,
+      premiumTier: tier,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return { sessionId: session.id, url: session.url ?? undefined, status: 'pending' };
+}
+
+async function fetchAndSyncStripeSubscription(uid: string): Promise<{
+  subscriptionId: string;
+  status: string;
+}> {
+  const db = getFirestore();
+  const userRef = db.collection('users').doc(uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.exists) {
+    throw new HttpsError('not-found', 'User profile not found.');
+  }
+
+  const subscriptionId = String(userSnap.get('stripeSubscriptionId') ?? '').trim();
+  if (!subscriptionId) {
+    throw new HttpsError('failed-precondition', 'No Stripe subscription is linked to this account.');
+  }
+
+  const stripeSecret = requireStripeSecret();
+  const stripe = new Stripe(stripeSecret, { apiVersion: '2022-11-15' });
+
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const status = subscription.status ?? 'unknown';
+
+  await userRef.set(
+    {
+      stripeSubscriptionStatus: status,
+      isPremium: status === 'active' || status === 'trialing',
+      premiumActivatedAt: status === 'active' ? FieldValue.serverTimestamp() : userSnap.get('premiumActivatedAt') ?? null,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return { subscriptionId, status };
+}
+
+export const createPremiumSubscription = onCall(
+  {
+    timeoutSeconds: 60,
+    memory: "512MiB",
+    enforceAppCheck: true,
+    secrets: ["STRIPE_SECRET_KEY"],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Please sign in before subscribing.");
+    }
+
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const tier = String(data.tier ?? "monthly") as PremiumTier;
+    if (tier !== "monthly" && tier !== "yearly") {
+      throw new HttpsError("invalid-argument", "Tier must be either monthly or yearly.");
+    }
+
+    try {
+      // Return the static Payment Link for the tier
+      const linkEnvVar = tier === 'yearly' ? 'STRIPE_YEARLY_PAYMENT_LINK' : 'STRIPE_MONTHLY_PAYMENT_LINK';
+      let paymentLink = process.env[linkEnvVar]?.trim();
+      if (!paymentLink) {
+        throw new HttpsError('failed-precondition', `No Payment Link configured for ${tier} tier.`);
+      }
+
+      // If we have the user's email, append it to the payment link to prefill checkout email
+      const userEmail = String(request.auth.token?.email ?? "").trim().toLowerCase();
+      if (userEmail) {
+        const separator = paymentLink.includes('?') ? '&' : '?';
+        const encoded = encodeURIComponent(userEmail);
+        paymentLink = `${paymentLink}${separator}prefilled_email=${encoded}`;
+      }
+
+      // Log the subscription request
+      logFunctionCall('createPremiumSubscription', request.auth.uid, { tier, paymentLink, userEmail });
+
+      return {
+        tier,
+        success: true,
+        redirectUrl: paymentLink,
+        status: 'pending',
+        provider: 'stripe',
+      };
+    } catch (err) {
+      logFunctionError('createPremiumSubscription', err, request.auth.uid);
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError("internal", "Failed to create subscription link.");
+    }
+  },
+);
+
+export const refreshPremiumSubscription = onCall(
+  {
+    timeoutSeconds: 60,
+    memory: "512MiB",
+    enforceAppCheck: true,
+    secrets: ["STRIPE_SECRET_KEY"],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Please sign in before checking your subscription.");
+    }
+
+    // Only support Stripe for subscription status refresh.
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new HttpsError('failed-precondition', 'Stripe is not configured. Set STRIPE_SECRET_KEY in Functions environment variables.');
+    }
+
+    const result = await fetchAndSyncStripeSubscription(request.auth.uid);
+    return result;
+  },
+);
+
+export const createBasicTestPayment = onCall(
+  {
+    timeoutSeconds: 30,
+    memory: "256MiB",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Please sign in before testing a payment.");
+    }
+
+    const data = (request.data ?? {}) as Record<string, unknown>;
+    const phone = String(data.phone ?? "").trim();
+    const method = String(data.method ?? "gcash").toLowerCase();
+    const tier = String(data.tier ?? "monthly") as PremiumTier;
+    if (!phone) {
+      throw new HttpsError("invalid-argument", "A phone number is required for test payments.");
+    }
+
+    const uid = request.auth.uid;
+    const db = getFirestore();
+    const userRef = db.collection("users").doc(uid);
+
+    // Create a lightweight test payment record and mark user premium for testing.
+    const paymentRef = db.collection("test_payments").doc();
+    await paymentRef.set({
+      uid,
+      phone,
+      method,
+      tier,
+      createdAt: FieldValue.serverTimestamp(),
+      simulated: true,
+    });
+
+    await userRef.set(
+      {
+        isPremium: true,
+        premiumActivatedAt: FieldValue.serverTimestamp(),
+        premiumTier: tier,
+        testPaymentMethod: method,
+        testPaymentPhone: phone,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return { success: true, message: "Test payment recorded and premium enabled." };
+  },
+);
 
 /**
  * When a barber confirms payment, update:
@@ -119,4 +370,141 @@ export const onPaymentConfirmed = onDocumentUpdated(
     }
   },
 );
+
+/**
+ * Stripe Webhook handler
+ * Listens for checkout.session.completed and customer.subscription.updated events
+ * Updates user premium status in Firestore when payment is confirmed
+ */
+export const stripeWebhook = onRequest(
+  { cors: true },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).send('Method not allowed');
+      return;
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', { apiVersion: '2022-11-15' });
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+
+    if (!webhookSecret) {
+      logFunctionError('stripeWebhook', 'STRIPE_WEBHOOK_SECRET not configured');
+      response.status(400).send('Webhook secret not configured');
+      return;
+    }
+
+    let event: Stripe.Event;
+    try {
+      const sig = request.headers['stripe-signature'] as string;
+      event = stripe.webhooks.constructEvent(
+        request.rawBody || request.body,
+        sig,
+        webhookSecret
+      );
+    } catch (err) {
+      logFunctionError('stripeWebhook', `Signature verification failed: ${err}`);
+      response.status(400).send(`Webhook Error: ${err}`);
+      return;
+    }
+
+    logFunctionCall('stripeWebhook', undefined, { eventType: event.type });
+
+    const db = getFirestore();
+
+    try {
+      // Handle checkout.session.completed event
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const uid = session.metadata?.stylesync_uid as string | undefined;
+        const tier = session.metadata?.subscription_tier as PremiumTier | undefined;
+
+        // subscription id can be present on the session (for subscriptions)
+        const subscriptionId = (session.subscription as string) || undefined;
+
+        if (uid) {
+          const userRef = db.collection('users').doc(uid);
+          await userRef.set(
+            {
+              stripeCustomerId: session.customer,
+              stripeCheckoutSessionId: session.id,
+              stripeSubscriptionId: subscriptionId || null,
+              stripeSubscriptionStatus: subscriptionId ? 'active' : 'pending',
+              isPremium: subscriptionId ? true : false,
+              premiumActivatedAt: subscriptionId ? FieldValue.serverTimestamp() : null,
+              premiumTier: tier || 'monthly',
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          logFunctionCall('stripeWebhook', uid, { event: 'checkout_completed', tier, subscriptionId });
+        } else {
+          // Try to match by customer email if metadata wasn't provided
+          const email = session.customer_details?.email || (session as any).customer_email || '';
+          if (email) {
+            const usersRef = db.collection('users');
+            const querySnap = await usersRef.where('email', '==', String(email).toLowerCase()).limit(1).get();
+            if (!querySnap.empty) {
+              const userRef = querySnap.docs[0].ref;
+              const uidFound = userRef.id;
+              await userRef.set(
+                {
+                  stripeCustomerId: session.customer,
+                  stripeCheckoutSessionId: session.id,
+                  stripeSubscriptionId: subscriptionId || null,
+                  stripeSubscriptionStatus: subscriptionId ? 'active' : 'pending',
+                  isPremium: subscriptionId ? true : false,
+                  premiumActivatedAt: subscriptionId ? FieldValue.serverTimestamp() : null,
+                  premiumTier: tier || 'monthly',
+                  updatedAt: FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
+
+              logFunctionCall('stripeWebhook', uidFound, { event: 'checkout_completed_by_email', email, subscriptionId });
+            } else {
+              logFunctionCall('stripeWebhook', undefined, { event: 'checkout_completed_no_user', email });
+            }
+          } else {
+            logFunctionCall('stripeWebhook', undefined, { event: 'checkout_completed_no_metadata_or_email' });
+          }
+        }
+      }
+
+      // Handle customer.subscription.updated event
+      if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.created') {
+        const subscription = event.data.object as Stripe.Subscription;
+        const customerId = subscription.customer as string | undefined;
+
+        // Find user by Stripe customer ID
+        const usersRef = db.collection('users');
+        const querySnap = await usersRef.where('stripeCustomerId', '==', customerId).limit(1).get();
+
+        if (!querySnap.empty) {
+          const userRef = querySnap.docs[0].ref;
+          const uid = userRef.id;
+          const status = subscription.status ?? 'unknown';
+
+          await userRef.set(
+            {
+              stripeSubscriptionId: subscription.id,
+              stripeSubscriptionStatus: status,
+              isPremium: status === 'active' || status === 'trialing',
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          logFunctionCall('stripeWebhook', uid, { event: 'subscription_updated_or_created', status });
+        }
+      }
+
+      response.status(200).json({ received: true });
+    } catch (err) {
+      logFunctionError('stripeWebhook', err);
+      response.status(500).send(`Webhook processing error: ${err}`);
+    }
+  }
+);
+
 

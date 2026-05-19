@@ -127,3 +127,10 @@ const List<String> kHairTypes = [
 const String kAppName = "StyleSync";
 const String kAppVersion = "1.0.0";
 const String kSupportEmail = "support@stylesync.ph";
+
+// Development flags
+// When true, barber-related screens use static demo data and
+// some live Firestore listeners are disabled to avoid permission
+// errors during local UI preview.
+// Set to false to enable live Firestore-driven booking lists.
+const bool kUseDemoBarberUI = false;

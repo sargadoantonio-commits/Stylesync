@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import '../../models/hairstyle_filter.dart';
-import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_typography.dart';
-import '../../../core/theme/enhanced_design_system.dart';
+import '../../../../models/hairstyle_filter.dart';
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/enhanced_design_system.dart';
 
 /// Widget for rendering hairstyle filters on detected faces
 class HairstyleFilterOverlay extends StatelessWidget {
@@ -25,7 +25,7 @@ class HairstyleFilterOverlay extends StatelessWidget {
     }
 
     return CustomPaint(
-      painter: HairstyleFilterPainter(
+      painter: HairstyleFilterPainter(  
         faces: detectedFaces,
         filter: selectedFilter!,
         filterState: filterState ?? const FilterApplicationState(),

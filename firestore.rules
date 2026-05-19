@@ -128,24 +128,49 @@ service cloud.firestore {
 
     match /shops/{shopId} {
       allow read: if signedIn();
-      // Only shop owners can manage their shop document.
+      // Only shop owners can create shop documents.
       allow create: if isShopOwner()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.keys().hasAll(['name', 'ownerId', 'address', 'totalRevenue']);
       // Shop owner or barber admin can update their shop, including barbers array
-      allow update: if (isShopOwner() && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == resource.data.ownerId)
-        || barberIsAdminInShop(shopId);
+      // Additionally, allow clients to perform ticketCount-only updates (increment/decrement)
+      // which are performed as part of join/leave queue transactions.
+      allow update: if (
+          (isShopOwner() && resource.data.ownerId == request.auth.uid
+            && request.resource.data.ownerId == resource.data.ownerId)
+          || barberIsAdminInShop(shopId)
+        )
+        || (
+          // Allow ticketCount updates from signed-in users when only ticketCount/updatedAt
+          // fields are modified (checked via diff) and the change is an increment or decrement by 1.
+          signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ticketCount','updatedAt'])
+          && request.resource.data.ticketCount is int
+          && (
+            // If the shop previously had a ticketCount, allow +1 or -1
+            (resource.data.keys().hasAny(['ticketCount']) && (
+              request.resource.data.ticketCount == resource.data.ticketCount + 1
+              || request.resource.data.ticketCount == resource.data.ticketCount - 1
+            ))
+            // If there was no previous ticketCount, allow setting it to a non-negative integer
+            || (!resource.data.keys().hasAny(['ticketCount']) && request.resource.data.ticketCount >= 0)
+          )
+        );
       allow delete: if false;
 
       match /queue/{ticketId} {
         allow read: if signedIn();
-        allow create: if isCustomer()
-          && request.resource.data.userId == request.auth.uid
-          && request.resource.data.keys().hasAll(['userId', 'username', 'isPremium', 'joinedAt']);
-        // Customers can cancel their own ticket; approved barbers can manage queue flow.
-        allow update, delete: if (isCustomer() && resource.data.userId == request.auth.uid)
-          || isApprovedBarber();
+        // Simple, safe client create: only allow users to create their own ticket
+        // and only with the expected fields.
+        allow create: if signedIn()
+          && request.auth.uid == request.resource.data.userId
+          && request.resource.data.keys().hasOnly(['userId', 'username', 'isPremium', 'joinedAt'])
+          && request.resource.data.userId is string
+          && request.resource.data.username is string
+          && request.resource.data.isPremium is bool
+          && request.resource.data.joinedAt is timestamp;
+        // Only the ticket owner can update/delete their ticket.
+        allow update, delete: if signedIn() && request.auth.uid == resource.data.userId;
       }
 
       // Barber-direct handshake + server-authoritative payment confirmation.
@@ -228,8 +253,18 @@ service cloud.firestore {
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.keys().hasAll(['customerId', 'shopId', 'barberId', 'status', 'createdAt']);
 
-      // Updates/deletes are restricted to server or approved barber/shop owner flows
-      allow update, delete: if false;
+      // Allow customers to cancel their own booking by setting only the
+      // `status` field to 'cancelled'. For local/dev flows we allow any
+      // authenticated user whose UID matches the booking.customerId to
+      // cancel (avoids requiring a separate users/ doc during emulator tests).
+      allow update: if signedIn()
+        && resource.data.customerId == request.auth.uid
+        // Only allow changing the `status` field during this operation
+        && request.resource.data.keys().hasOnly(['status'])
+        && request.resource.data.status == 'cancelled';
+
+      // Deletions are not allowed from clients
+      allow delete: if false;
     }
   }
 }

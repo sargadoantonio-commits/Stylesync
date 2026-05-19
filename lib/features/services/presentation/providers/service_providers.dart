@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:stylesync/core/constants.dart' as _flags;
 import '../../data/service_repository.dart';
 import '../../domain/service_models.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
@@ -54,9 +55,15 @@ final barberConfirmationsProvider = StreamProvider<List<ServiceDoc>>((ref) {
 
   return userProfile.when(
     data: (profile) {
+      if (_flags.kUseDemoBarberUI) {
+        // Demo mode: disable live confirmations stream to avoid permission errors
+        return const Stream.empty();
+      }
+
       if (profile != null) {
         return serviceRepo.getBarberPendingConfirmations(profile.uid);
       }
+
       return const Stream.empty();
     },
     loading: () => const Stream.empty(),

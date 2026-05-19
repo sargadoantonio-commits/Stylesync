@@ -63,7 +63,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-      await FirebaseFirestore.instance
+      await _withRetry(() => FirebaseFirestore.instance
           .collection("users")
           .doc(cred.user!.uid)
           .set({
@@ -76,7 +76,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         "xpPoints": 0,
         "level": 1,
         "createdAt": FieldValue.serverTimestamp(),
-      });
+      }));
       if (_selectedRole == "barber") {
         if (mounted) context.go("/barber/apply");
       } else {
@@ -88,8 +88,35 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             content: Text(e.message ?? "Registration failed"),
             backgroundColor: AppColors.kDanger),
       );
+    } on FirebaseException catch (e) {
+      // Handle Firestore errors (transient/unavailable etc.) with user-friendly message
+      final msg = (e.code == 'unavailable')
+          ? 'Service currently unavailable. Please try again.'
+          : (e.message ?? 'Registration failed');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: AppColors.kDanger),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<T> _withRetry<T>(Future<T> Function() fn,
+      {int maxAttempts = 4}) async {
+    int attempt = 0;
+    while (true) {
+      try {
+        return await fn();
+      } catch (e) {
+        attempt++;
+        if (attempt >= maxAttempts) rethrow;
+        if (e is FirebaseException && e.code == 'unavailable') {
+          final backoff = Duration(milliseconds: 500 * (1 << (attempt - 1)));
+          await Future.delayed(backoff);
+          continue;
+        }
+        rethrow;
+      }
     }
   }
 

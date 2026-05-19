@@ -170,8 +170,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               margin: const EdgeInsets.all(16),
             ),
           );
-          // Regular users go straight to home
-          context.go(AppRoutes.home);
+          // Navigate to landing so router redirect sends user to role-specific home
+          context.go(AppRoutes.landing);
         }
       }
     } on StateError catch (e) {
@@ -393,7 +393,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       if (profile != null && profile.profileComplete == false) {
         context.go(AppRoutes.profileSetup);
       } else {
-        context.go(AppRoutes.home);
+        // Go to landing to let the router redirect based on role/profile
+        context.go(AppRoutes.landing);
       }
     } catch (e) {
       String errorMessage = _userFriendlyErrorMessage(e);
@@ -882,9 +883,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                                 enabled: OAuthConfig.isGoogleConfigured,
                                 width: double.infinity,
                                 height: responsiveButtonHeight,
-                                onTap: () => _socialSignIn(ref
+                                onTap: () => _socialSignIn(() => ref
                                     .read(authRepositoryProvider)
-                                    .signInWithGoogle),
+                                    .signInWithGoogle(
+                                      roleForNewAccount: _isLogin
+                                          ? null
+                                          : _selectedRole,
+                                    )),
                               ),
                             ],
                           ),
@@ -924,11 +929,60 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                           child: TextButton(
                             onPressed: _busy
                                 ? null
-                                : () {
+                                : () async {
                                     HapticFeedback.selectionClick();
-                                    context.go(_isLogin
+                                    // Prevent redirect loop when already signed in.
+                                    final current = ref
+                                        .read(firebaseAuthProvider)
+                                        .currentUser;
+                                    final target = _isLogin
                                         ? AppRoutes.register
-                                        : AppRoutes.login);
+                                        : AppRoutes.login;
+                                    if (current == null) {
+                                      context.go(target);
+                                      return;
+                                    }
+
+                                    // If user is already signed in, confirm sign out
+                                    final doSignOut = await showDialog<bool>(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        backgroundColor: AppColors.card,
+                                        title: Text('Already signed in',
+                                            style: AppTypography.orbitronHeading(
+                                                16)),
+                                        content: Text(
+                                          'You are currently signed in. Sign out to create a new account?',
+                                          style: AppTypography.interBody(14)
+                                              .copyWith(
+                                                  color: AppColors.textMuted),
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, false),
+                                              child: Text('Cancel',
+                                                  style: AppTypography.interBody(14)
+                                                      .copyWith(
+                                                          color: AppColors.textMuted))),
+                                          FilledButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, true),
+                                              child: Text('Sign out & continue',
+                                                  style: AppTypography.interBody(14,
+                                                          weight: FontWeight.w700))),
+                                        ],
+                                      ),
+                                    );
+
+                                    if (doSignOut == true) {
+                                      await ref
+                                          .read(authRepositoryProvider)
+                                          .signOut();
+                                      if (!mounted) return;
+                                      // After sign-out, navigate to target (register/login)
+                                      context.go(target);
+                                    }
                                   },
                             style: TextButton.styleFrom(
                               foregroundColor: AppColors.accentMagenta,

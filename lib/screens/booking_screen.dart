@@ -1,20 +1,24 @@
 import "package:flutter/material.dart";
 import "package:go_router/go_router.dart";
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import "../core/theme/app_colors.dart";
 import "../core/theme/app_typography.dart";
 import "../core/theme/responsive_helper.dart";
 import "../core/theme/style_button.dart";
 import "../core/theme/glass_card.dart";
 import "../widgets/section_pill_badge.dart";
+import '../features/shop/presentation/providers/shop_providers.dart';
 
-class BookingScreen extends StatefulWidget {
+class BookingScreen extends ConsumerStatefulWidget {
   const BookingScreen({super.key});
 
   @override
-  State<BookingScreen> createState() => _BookingScreenState();
+  ConsumerState<BookingScreen> createState() => _BookingScreenState();
 }
 
-class _BookingScreenState extends State<BookingScreen>
+class _BookingScreenState extends ConsumerState<BookingScreen>
     with SingleTickerProviderStateMixin {
   static const String kShopName = "Kings Cut Studio";
   static const String kShopAddr = "456 Style Avenue, Downtown";
@@ -72,7 +76,7 @@ class _BookingScreenState extends State<BookingScreen>
     if (time != null) setState(() => _selectedTime = time);
   }
 
-  void _confirmBooking() {
+  Future<void> _confirmBooking() async {
     if (_selectedBarber == null ||
         _selectedService == null ||
         _selectedDate == null ||
@@ -88,14 +92,85 @@ class _BookingScreenState extends State<BookingScreen>
       _confirmed = true;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          "Booking confirmed with $_selectedBarber at $kShopName on ${_selectedDate!.month}/${_selectedDate!.day} at ${_selectedTime!.format(context)}.",
+    // Persist booking to Firestore
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      // Try to get selected shop id from app state (fallback: first shop in DB)
+      String? shopId = ref.read(selectedShopIdProvider);
+      if (shopId == null) {
+        final firstShopSnap = await FirebaseFirestore.instance
+            .collection('shops')
+            .limit(1)
+            .get();
+        if (firstShopSnap.docs.isNotEmpty) shopId = firstShopSnap.docs.first.id;
+      }
+
+      if (shopId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No shop selected. Please select a shop.')),
+        );
+        setState(() {
+          _confirmed = false;
+        });
+        return;
+      }
+      final bookedDateStr = "${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2,'0')}-${_selectedDate!.day.toString().padLeft(2,'0')}";
+      final bookedTimeStr = _selectedTime!.format(context);
+      // Lookup shop info for display and persistence
+      final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
+      final shopName = shopDoc.data()?['name'] ?? kShopName;
+      final shopAddr = shopDoc.data()?['address'] ?? kShopAddr;
+
+      final data = {
+        'shopId': shopId,
+        'shopName': shopName,
+        'shopAddr': shopAddr,
+        'customerId': uid,
+        'serviceId': _selectedService,
+        'barberId': _selectedBarber,
+        'bookedDate': bookedDateStr,
+        'bookedTime': bookedTimeStr,
+        'totalCost': 500,
+        'status': 'upcoming',
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      // Add document to bookings collection
+      FirebaseFirestore.instance.collection('bookings').add(data).then((docRef) {
+        final referenceCode = 'SS-${docRef.id.substring(0,5).toUpperCase()}';
+        // Save referenceCode on the booking doc
+        docRef.update({'referenceCode': referenceCode});
+
+        // Navigate to confirmation screen with extras
+        context.push('/booking/confirmed', extra: {
+          'referenceCode': referenceCode,
+          'barber': _selectedBarber,
+          'service': _selectedService,
+          'price': 500.0,
+          'date': _selectedDate,
+          'time': bookedTimeStr,
+          'shopName': shopName,
+          'shopAddr': shopAddr,
+        });
+      }).catchError((err) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create booking: $err')),
+        );
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Booking confirmed with $_selectedBarber at $shopName on ${_selectedDate!.month}/${_selectedDate!.day} at ${_selectedTime!.format(context)}.",
+          ),
+          backgroundColor: AppColors.accentRed,
         ),
-        backgroundColor: AppColors.accentRed,
-      ),
-    );
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving booking: $e')),
+      );
+    }
   }
 
   @override
@@ -202,25 +277,124 @@ class _BookingScreenState extends State<BookingScreen>
             ),
           ),
           SizedBox(height: responsiveSpacing),
+          // Shop selection
           GlassCard(
             child: Padding(
               padding: EdgeInsets.all(responsivePadding),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.store_outlined,
-                      color: AppColors.accentMagenta, size: 20),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(kShopName,
-                          style: AppTypography.orbitronHeading(14)
-                              .copyWith(color: AppColors.kText)),
-                      Text(kShopAddr,
+                  const SectionPillBadge(label: "Shop"),
+                  SizedBox(height: responsiveSpacing * 0.6),
+                  Builder(builder: (ctx) {
+                    final shopsAsync = ref.watch(allShopsProvider);
+                    final selectedShopId = ref.watch(selectedShopIdProvider);
+                    return shopsAsync.when(
+                      data: (shops) {
+                        if (shops.isEmpty) {
+                          // Provide a fallback choice for development/testing: Elcorte
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (ref.read(selectedShopIdProvider) == null) {
+                              ref.read(selectedShopIdProvider.notifier).state = 'elcorte';
+                            }
+                          });
+
+                          final isSelected = selectedShopId == 'elcorte';
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text('No shops available',
+                                  style: AppTypography.interBody(12)
+                                      .copyWith(color: AppColors.kMuted)),
+                              SizedBox(height: responsiveSpacing * 0.5),
+                              Wrap(
+                                children: [
+                                  ChoiceChip(
+                                    label: const Text('Elcorte'),
+                                    selected: isSelected,
+                                    selectedColor: AppColors.accentMagenta,
+                                    backgroundColor: AppColors.card,
+                                    onSelected: (_) {
+                                      ref.read(selectedShopIdProvider.notifier).state = 'elcorte';
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        }
+
+                        // Ensure selectedShopId defaults to first shop if null
+                        if (selectedShopId == null) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            ref
+                                .read(selectedShopIdProvider.notifier)
+                                .state = shops.first.shopId;
+                          });
+                        }
+
+                        final selected = shops.firstWhere(
+                            (s) => s.shopId == selectedShopId,
+                            orElse: () => shops.first);
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.store_outlined,
+                                    color: AppColors.accentMagenta, size: 20),
+                                const SizedBox(width: 12),
+                                Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(selected.name ?? kShopName,
+                                        style: AppTypography.orbitronHeading(14)
+                                            .copyWith(color: AppColors.kText)),
+                                    Text(selected.address ?? kShopAddr,
+                                        style: AppTypography.interBody(12)
+                                            .copyWith(color: AppColors.kMuted)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: responsiveSpacing * 0.75),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: shops.map((shop) {
+                                  final isSelected = shop.shopId == selected.shopId;
+                                  return Padding(
+                                    padding: EdgeInsets.only(
+                                        right: responsiveSpacing * 0.5),
+                                    child: ChoiceChip(
+                                      label: Text(shop.name ?? 'Shop'),
+                                      selected: isSelected,
+                                      selectedColor: AppColors.accentMagenta,
+                                      backgroundColor: AppColors.card,
+                                      onSelected: (_) {
+                                        ref
+                                            .read(selectedShopIdProvider
+                                                .notifier)
+                                            .state = shop.shopId;
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                      loading: () => const SizedBox(
+                          height: 40,
+                          child: Center(child: CircularProgressIndicator())),
+                      error: (e, st) => Text('Failed to load shops',
                           style: AppTypography.interBody(12)
                               .copyWith(color: AppColors.kMuted)),
-                    ],
-                  ),
+                    );
+                  }),
                 ],
               ),
             ),

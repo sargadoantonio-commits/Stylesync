@@ -1,6 +1,7 @@
 import "dart:convert";
 
 import "package:cloud_firestore/cloud_firestore.dart";
+import 'package:flutter/foundation.dart';
 import "package:shared_preferences/shared_preferences.dart";
 
 /// Priority queue under `shops/{shopId}/queue/{ticketId}`.
@@ -27,40 +28,34 @@ class QueueRepository {
     required bool isPremium,
   }) async {
     final shopRef = _shopRef(shopId);
-    final ticketRef = shopRef.collection("queue").doc();
-    String shopAddress = "Shop address saved locally.";
-    int positionInQueue = 0;
-
-    await _db.runTransaction((tx) async {
-      final shopSnap = await tx.get(shopRef);
-      final shopData = shopSnap.data();
-      shopAddress = shopData?['address'] as String? ?? shopAddress;
-
-      final queueSnapshot = await shopRef
-          .collection("queue")
-          .orderBy("isPremium", descending: true)
-          .orderBy("joinedAt", descending: false)
-          .get();
-      final docs = queueSnapshot.docs;
-      final ticketCount = docs.length;
-      positionInQueue = docs.length + 1;
-
-      tx.set(
-        shopRef,
-        {
-          "ticketCount": ticketCount + 1,
-          "updatedAt": FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      tx.set(ticketRef, {
-        "userId": userId,
-        "username": username,
-        "isPremium": isPremium,
-        "joinedAt": FieldValue.serverTimestamp(),
+    final ticketRef = shopRef.collection('queue').doc();
+    try {
+      debugPrint('[Queue] joinQueueSimple: creating ticket ${ticketRef.id} for user=$userId');
+      await ticketRef.set({
+        'userId': userId,
+        'username': username,
+        'isPremium': isPremium,
+        'joinedAt': FieldValue.serverTimestamp(),
       });
-    });
+    } on FirebaseException catch (e, st) {
+      debugPrint('[Queue] joinQueueSimple: FirebaseException code=${e.code} message=${e.message}');
+      debugPrint(st.toString());
+      rethrow;
+    } catch (e, st) {
+      debugPrint('[Queue] joinQueueSimple: unexpected error $e');
+      debugPrint(st.toString());
+      rethrow;
+    }
+
+    // compute position and save cached ticket
+    final queueSnap = await shopRef
+        .collection('queue')
+        .orderBy('isPremium', descending: true)
+        .orderBy('joinedAt', descending: false)
+        .get();
+    final positionInQueue = queueSnap.docs.indexWhere((d) => d.id == ticketRef.id) + 1;
+    final shopSnap = await shopRef.get();
+    final shopAddress = shopSnap.data()?['address'] as String? ?? 'Shop address saved locally.';
 
     await _saveCachedTicket(
       shopId,
@@ -76,6 +71,36 @@ class QueueRepository {
     );
 
     return ticketRef.id;
+  }
+
+  /// Debug helper: create a ticket without running the full transaction.
+  /// This performs a simple add and a separate increment update which can
+  /// help isolate whether the transaction or rules around `shops/{shopId}`
+  /// are causing permission errors.
+  Future<String> addDemoTicket({
+    required String shopId,
+    required String userId,
+    required String username,
+    required bool isPremium,
+  }) async {
+    final shopRef = _shopRef(shopId);
+    final ticketRef = shopRef.collection('queue').doc();
+    try {
+      debugPrint('[Queue] addDemoTicket: creating ticket ${ticketRef.id} for user=$userId');
+      await ticketRef.set({
+        'userId': userId,
+        'username': username,
+        'isPremium': isPremium,
+        'joinedAt': FieldValue.serverTimestamp(),
+      });
+      debugPrint('[Queue] addDemoTicket: updating shop ticketCount via increment');
+      await shopRef.set({'ticketCount': FieldValue.increment(1), 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+      return ticketRef.id;
+    } on FirebaseException catch (e, st) {
+      debugPrint('[Queue] addDemoTicket: FirebaseException code=${e.code} message=${e.message}');
+      debugPrint(st.toString());
+      rethrow;
+    }
   }
 
   Future<void> _saveCachedTicket(String shopId, QueueTicketCache ticket) async {
@@ -96,20 +121,54 @@ class QueueRepository {
 
   Future<void> leaveQueue(String shopId, String ticketId) async {
     final shopRef = _shopRef(shopId);
-    final ticketRef = shopRef.collection("queue").doc(ticketId);
-    await _db.runTransaction((tx) async {
-      final ticketSnap = await tx.get(ticketRef);
-      if (!ticketSnap.exists) return;
-      tx.delete(ticketRef);
-      final shopSnap = await tx.get(shopRef);
-      if (shopSnap.exists) {
-        tx.update(shopRef, {
-          "ticketCount": FieldValue.increment(-1),
-          "updatedAt": FieldValue.serverTimestamp(),
-        });
-      }
-    });
+    final ticketRef = shopRef.collection('queue').doc(ticketId);
+    final ticketSnap = await ticketRef.get();
+    if (!ticketSnap.exists) return;
+    try {
+      await ticketRef.delete();
+    } on FirebaseException catch (e, st) {
+      debugPrint('[Queue] leaveQueue: FirebaseException ${e.code} ${e.message}');
+      debugPrint(st.toString());
+      rethrow;
+    }
     await _clearCachedTicket(shopId);
+  }
+
+  /// For shop owners/barbers: call the next ticket in line.
+  /// Returns the ticketId that was called, or null if none.
+  Future<String?> callNext(String shopId) async {
+    final shopRef = _shopRef(shopId);
+    String? calledId;
+
+    await _db.runTransaction((tx) async {
+      final qSnap = await shopRef
+          .collection("queue")
+          .orderBy("isPremium", descending: true)
+          .orderBy("joinedAt", descending: false)
+          .limit(1)
+          .get();
+
+      if (qSnap.docs.isEmpty) return;
+      final doc = qSnap.docs.first;
+      calledId = doc.id;
+
+      tx.update(doc.reference, {
+        'status': 'called',
+        'calledAt': FieldValue.serverTimestamp(),
+      });
+
+      tx.set(shopRef, {
+        'currentServingTicketId': calledId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    });
+
+    return calledId;
+  }
+
+  Future<void> clearCurrentServing(String shopId) async {
+    final shopRef = _shopRef(shopId);
+    await shopRef.update({'currentServingTicketId': FieldValue.delete(), 'updatedAt': FieldValue.serverTimestamp()});
   }
 
   Future<void> _clearCachedTicket(String shopId) async {

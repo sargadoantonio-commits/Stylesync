@@ -425,6 +425,7 @@ class AuthRepository {
       return;
     }
 
+    // EXISTING USER - update profile but preserve role
     final data = snap.data()!;
     final patches = <String, dynamic>{};
     if ((data["username"] as String? ?? "").isEmpty) {
@@ -490,26 +491,20 @@ class AuthRepository {
     }
   }
 
-  Future<void> signInWithGoogle() async {
+  Future<void> signInWithGoogle({UserRole? roleForNewAccount}) async {
     if (!OAuthConfig.isGoogleConfigured) {
       throw StateError(OAuthConfig.googleNotConfiguredError);
     }
 
     try {
       // Initialize Google Sign In with platform-appropriate configuration
-      // On Android: use serverClientId for proper backend credential exchange
-      // On Web: omit serverClientId - web OAuth works differently
       late final GoogleSignIn googleSignIn;
 
       if (kIsWeb) {
-        // Web configuration - don't use serverClientId
         googleSignIn = GoogleSignIn(
           scopes: ['email', 'profile'],
         );
       } else {
-        // Android/native configuration
-        // Note: Don't use serverClientId for Google Sign-In on Android; it can cause
-        // Api10 errors due to mismatched OAuth credentials. Let Play Services handle auth.
         googleSignIn = GoogleSignIn(
           scopes: ['email', 'profile'],
         );
@@ -538,7 +533,22 @@ class AuthRepository {
             "Google Sign-In succeeded but user creation failed. Please try again.");
       }
 
-      await ensureUserDocument(cred.user!);
+      // Check if existing profile has a different role (only during signup)
+      final existingProfile = await fetchProfile(cred.user!.uid);
+      if (existingProfile != null && roleForNewAccount != null) {
+        // During signup, prevent using an email that's already associated with a different role
+        if (existingProfile.role != roleForNewAccount) {
+          throw StateError(
+              "This Google account is already registered as a ${existingProfile.role.name}. "
+              "You cannot use the same account for a different role. "
+              "Please use a different Google account or sign in as a ${existingProfile.role.name}.");
+        }
+      }
+
+      await ensureUserDocument(
+        cred.user!,
+        defaultRole: roleForNewAccount ?? UserRole.customer,
+      );
     } on FirebaseAuthException catch (e) {
       if (e.code == "network-request-failed" ||
           (e.message?.contains("network") ?? false)) {

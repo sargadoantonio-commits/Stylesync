@@ -7,6 +7,8 @@ import "package:stylesync/core/theme/app_typography.dart";
 import "package:stylesync/core/theme/glass_card.dart";
 import "package:stylesync/core/theme/style_button.dart";
 import "package:stylesync/features/auth/presentation/providers/auth_providers.dart";
+import "package:stylesync/core/router/app_routes.dart";
+import "package:go_router/go_router.dart";
 import "package:stylesync/features/auth/domain/user_model.dart";
 import "package:stylesync/features/services/presentation/providers/service_providers.dart";
 import "package:stylesync/features/services/domain/service_models.dart";
@@ -60,8 +62,33 @@ class _BarberDashboardScreenState extends ConsumerState<BarberDashboardScreen> {
 
   Widget _buildBarberDashboard(String uid, UserModel profile) {
     final shopId = ref.watch(defaultShopIdProvider);
-    final confirmationsAsync = ref.watch(barberConfirmationsProvider);
-    final queueAsync = ref.watch(queueSnapshotProvider);
+
+    // Static demo data for initial UI preview
+    final demoQueue = [
+      {
+        "userId": "u1",
+        "username": "Carlos",
+        "isPremium": true,
+        "queueIndex": 1,
+      },
+      {
+        "userId": "u2",
+        "username": "Jia",
+        "isPremium": false,
+        "queueIndex": 2,
+      },
+      {
+        "userId": "u3",
+        "username": "Omar",
+        "isPremium": false,
+        "queueIndex": 3,
+      }
+    ];
+
+    final demoConfirmations = [
+      {"id": "s1", "customerId": "Carlos", "amount": 250},
+      {"id": "s2", "customerId": "Jia", "amount": 180},
+    ];
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -95,6 +122,63 @@ class _BarberDashboardScreenState extends ConsumerState<BarberDashboardScreen> {
                     ),
                   ),
                   child: const Text('🔐', style: TextStyle(fontSize: 16)),
+                ),
+              ),
+            ),
+          ),
+          // Logout Button
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: GestureDetector(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      backgroundColor: AppColors.card,
+                      title: Text("Logout?",
+                          style: AppTypography.orbitronHeading(16)),
+                      content: Text(
+                        "Are you sure you want to sign out?",
+                        style: AppTypography.interBody(14),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: Text("Cancel",
+                              style: AppTypography.interBody(14)
+                                  .copyWith(color: AppColors.textMuted)),
+                        ),
+                        FilledButton(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            await ref
+                                .read(firebaseAuthProvider)
+                                .signOut();
+                            if (context.mounted) {
+                              GoRouter.of(context)
+                                  .go(AppRoutes.login);
+                            }
+                          },
+                          child: Text("Logout",
+                              style: AppTypography.interBody(14,
+                                  weight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.accentRed.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: AppColors.accentRed.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: const Text('🚪', style: TextStyle(fontSize: 16)),
                 ),
               ),
             ),
@@ -170,90 +254,62 @@ class _BarberDashboardScreenState extends ConsumerState<BarberDashboardScreen> {
           const SizedBox(height: 16),
           Text("Queue (tap to bill)", style: AppTypography.orbitronHeading(16)),
           const SizedBox(height: 12),
-          queueAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Text(e.toString(),
-                style: AppTypography.interBody(14)
-                    .copyWith(color: Colors.redAccent)),
-            data: (snap) {
-              final docs = snap.docs;
-              if (docs.isEmpty) {
-                return GlassCard(
+          // Static queue preview
+          demoQueue.isEmpty
+              ? GlassCard(
                   child: Text(
                     "No one in queue yet.",
                     style: AppTypography.interBody(14)
                         .copyWith(color: AppColors.textMuted),
                   ),
-                );
-              }
-              return Column(
-                children: docs.map((d) {
-                  final data = d.data();
-                  final customerId = data["userId"] as String? ?? "";
-                  final username = data["username"] as String? ?? "Guest";
-                  final isPremium = data["isPremium"] as bool? ?? false;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: GlassCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            username,
-                            style: AppTypography.interBody(16,
-                                weight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            isPremium ? "Premium priority" : "Standard",
-                            style: AppTypography.interBody(12)
-                                .copyWith(color: AppColors.textMuted),
-                          ),
-                          const SizedBox(height: 12),
-                          StyleButton(
-                            label: "Service done ? collect payment",
-                            icon: Icons.point_of_sale_rounded,
-                            onPressed: customerId.isEmpty
-                                ? null
-                                : () async {
-                                    final amount = await showDialog<int>(
-                                      context: context,
-                                      builder: (_) =>
-                                          _AmountDialog(username: username),
-                                    );
-                                    if (amount == null || amount <= 0) return;
-                                    await ref
-                                        .read(serviceRepositoryProvider)
-                                        .createService(
-                                          barberId: uid,
-                                          customerId: customerId,
-                                          shopId: shopId,
-                                          serviceName: "Service",
-                                          amount: amount.toDouble(),
-                                          scheduledAt: null,
-                                        );
-                                  },
-                          ),
-                        ],
+                )
+              : Column(
+                  children: demoQueue.map((data) {
+                    final customerId = data["userId"] as String? ?? "";
+                    final username = data["username"] as String? ?? "Guest";
+                    final isPremium = data["isPremium"] as bool? ?? false;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: GlassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              username,
+                              style: AppTypography.interBody(16,
+                                  weight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              isPremium ? "Premium priority" : "Standard",
+                              style: AppTypography.interBody(12)
+                                  .copyWith(color: AppColors.textMuted),
+                            ),
+                            const SizedBox(height: 12),
+                            StyleButton(
+                              label: "Service done ? collect payment",
+                              icon: Icons.point_of_sale_rounded,
+                              onPressed: () async {
+                                final amount = await showDialog<int>(
+                                  context: context,
+                                  builder: (_) => _AmountDialog(username: username),
+                                );
+                                // demo: do nothing further
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
+                    );
+                  }).toList(),
+                ),
           const SizedBox(height: 16),
           Text("Payment confirmations",
               style: AppTypography.orbitronHeading(16)),
           const SizedBox(height: 12),
-          confirmationsAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Text(e.toString(),
-                style: AppTypography.interBody(14)
-                    .copyWith(color: Colors.redAccent)),
-            data: (services) {
-              if (services.isEmpty) {
-                return GlassCard(
+          // Static confirmations preview
+          demoConfirmations.isEmpty
+              ? GlassCard(
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Text(
@@ -262,16 +318,39 @@ class _BarberDashboardScreenState extends ConsumerState<BarberDashboardScreen> {
                           .copyWith(color: AppColors.textMuted),
                     ),
                   ),
-                );
-              }
-
-              return Column(
-                children: services
-                    .map((s) => _ConfirmCard(shopId: shopId, service: s))
-                    .toList(),
-              );
-            },
-          ),
+                )
+              : Column(
+                  children: demoConfirmations.map((s) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: GlassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              "Confirm ?${PhFormatters.peso((s['amount'] as num?)?.toDouble() ?? 0)} received?",
+                              style: AppTypography.interBody(15, weight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              "Customer: ${s['customerId']}",
+                              style: AppTypography.interBody(12)
+                                  .copyWith(color: AppColors.textMuted),
+                            ),
+                            const SizedBox(height: 12),
+                            StyleButton(
+                              label: "Confirm received",
+                              icon: Icons.verified_rounded,
+                              onPressed: () {
+                                // demo only
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
         ],
       ),
     );

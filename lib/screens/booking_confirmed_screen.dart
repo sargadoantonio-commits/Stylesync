@@ -11,6 +11,8 @@ class BookingConfirmedScreen extends StatefulWidget {
   final double price;
   final DateTime date;
   final String time;
+  final String shopName;
+  final String shopAddr;
 
   const BookingConfirmedScreen({
     super.key,
@@ -20,6 +22,8 @@ class BookingConfirmedScreen extends StatefulWidget {
     required this.price,
     required this.date,
     required this.time,
+    required this.shopName,
+    required this.shopAddr,
   });
 
   @override
@@ -162,7 +166,7 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen>
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      '${widget.service} · ₱${widget.price.toStringAsFixed(0)} · Kings Cut Studio, Makati',
+                      '${widget.service} · ₱${widget.price.toStringAsFixed(0)} · ${widget.shopName}, ${widget.shopAddr}',
                       style: AppTypography.inter(
                         fontSize: 12,
                         color: AppColors.kMuted,

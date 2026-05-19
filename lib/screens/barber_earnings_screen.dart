@@ -16,7 +16,8 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
   @override
   void initState() {
     super.initState();
-    _uid = FirebaseAuth.instance.currentUser!.uid;
+    // Use a demo UID for static preview
+    _uid = FirebaseAuth.instance.currentUser?.uid ?? 'demo_barber';
   }
 
   @override
@@ -34,7 +35,7 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 16),
-            // Total Earnings Card
+            // Total Earnings Card (static demo)
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 24),
               padding: const EdgeInsets.all(20),
@@ -61,29 +62,14 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('bookings')
-                        .where('barberId', isEqualTo: _uid)
-                        .where('status', isEqualTo: 'completed')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      double total = 0;
-                      if (snapshot.hasData) {
-                        for (var doc in snapshot.data!.docs) {
-                          total += (doc['totalCost'] as num?)?.toDouble() ?? 0;
-                        }
-                      }
-
-                      return Text(
-                        '₱${total.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.kBg,
-                        ),
-                      );
-                    },
+                  // Static demo total
+                  Text(
+                    '₱12,150.00',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.kBg,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -99,22 +85,14 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
                               color: AppColors.kBg.withOpacity(0.8),
                             ),
                           ),
-                          StreamBuilder<QuerySnapshot>(
-                            stream: FirebaseFirestore.instance
-                                .collection('bookings')
-                                .where('barberId', isEqualTo: _uid)
-                                .where('status', isEqualTo: 'completed')
-                                .snapshots(),
-                            builder: (context, snapshot) {
-                              return Text(
-                                '${snapshot.data?.docs.length ?? 0}',
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.kBg,
-                                ),
-                              );
-                            },
+                          // Static demo count
+                          Text(
+                            '45',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.kBg,
+                            ),
                           ),
                         ],
                       ),
@@ -164,6 +142,7 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
                 ),
               ),
             ),
+            // Static breakdown
             _buildServiceBreakdownCard('Fade Design', 12, 8400),
             _buildServiceBreakdownCard('Clean Fade', 8, 5600),
             _buildServiceBreakdownCard('Beard Trim', 15, 4500),
@@ -184,91 +163,16 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
                 ),
               ),
             ),
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('bookings')
-                  .where('barberId', isEqualTo: _uid)
-                  .where('status', isEqualTo: 'completed')
-                  .orderBy('bookedDate', descending: true)
-                  .limit(10)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation(AppColors.kAccent),
-                    ),
-                  );
-                }
-
-                final completions = snapshot.data?.docs ?? [];
-
-                if (completions.isEmpty) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        'No completions yet',
-                        style: TextStyle(color: AppColors.kMuted),
-                      ),
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  itemCount: completions.length,
-                  itemBuilder: (context, idx) {
-                    final booking =
-                        completions[idx].data() as Map<String, dynamic>;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.kCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.kBorder),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                booking['serviceId'] ?? 'Service',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.kText,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                booking['bookedDate'] ?? 'Today',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.kMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            '₱${booking['totalCost'] ?? 0}',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.kGold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
+            // Static recent completions
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                children: [
+                  _buildCompletionRow('Fade Design', 'Today', 450),
+                  _buildCompletionRow('Beard Trim', 'Yesterday', 220),
+                  _buildCompletionRow('Classic Cut', '2 days ago', 400),
+                ],
+              ),
             ),
 
             const SizedBox(height: 32),
@@ -359,6 +263,52 @@ class _BarberEarningsScreenState extends State<BarberEarningsScreen> {
               const SizedBox(height: 2),
               Text(
                 '$count completed',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.kMuted,
+                ),
+              ),
+            ],
+          ),
+          Text(
+            '₱$amount',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.kGold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompletionRow(String title, String date, int amount) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.kCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.kBorder),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.kText,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                date,
                 style: const TextStyle(
                   fontSize: 11,
                   color: AppColors.kMuted,

@@ -6,6 +6,7 @@ import "package:go_router/go_router.dart";
 
 import "app_routes.dart";
 import "../../features/ar/presentation/ar_camera_screen.dart";
+import "../../screens/enhanced_ar_camera_screen.dart";
 import "../../features/ar/presentation/premium_upgrade_screen.dart";
 import "../../features/ar/presentation/screens/hairstyle_filter_gallery_screen.dart";
 import "../../features/auth/presentation/auth_screen.dart";
@@ -237,7 +238,11 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.ar,
         pageBuilder: (context, state) => _fadePage(
           key: state.pageKey,
-          child: const ArCameraScreen(),
+          // Route `/ar` now opens the simplified camera-only screen to
+          // avoid initialization issues on devices where the AR pipeline
+          // may fail. The original `ArCameraScreen` remains in the codebase
+          // for future restoration.
+          child: const EnhancedARCameraScreen(),
         ),
       ),
       GoRoute(
@@ -267,6 +272,8 @@ final goRouterProvider = Provider<GoRouter>((ref) {
               price: extra?['price'] ?? 0.0,
               date: extra?['date'] ?? DateTime.now(),
               time: extra?['time'] ?? '00:00',
+              shopName: extra?['shopName'] ?? 'Shop',
+              shopAddr: extra?['shopAddr'] ?? '',
             ),
           );
         },

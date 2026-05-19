@@ -1,8 +1,8 @@
 import "package:camera/camera.dart";
+import 'dart:io' show Platform;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:go_router/go_router.dart";
-import "package:google_mlkit_commons/google_mlkit_commons.dart";
 import "package:google_mlkit_face_detection/google_mlkit_face_detection.dart";
 import "package:permission_handler/permission_handler.dart";
 
@@ -146,14 +146,47 @@ class _ArCameraScreenState extends ConsumerState<ArCameraScreen> {
         orElse: () => cameras.first,
       );
 
-      _cameraController = CameraController(
-        frontCamera,
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
+      // Camera initialization with fallbacks for presets and formats to avoid
+      // CameraX pixel format issues on some Android devices.
+      final presets = [ResolutionPreset.high, ResolutionPreset.medium, ResolutionPreset.low];
+        final formats = Platform.isAndroid
+          ? <ImageFormatGroup?>[null, ImageFormatGroup.yuv420, ImageFormatGroup.nv21, ImageFormatGroup.unknown]
+          : <ImageFormatGroup?>[null, ImageFormatGroup.bgra8888, ImageFormatGroup.unknown];
 
-      await _cameraController.initialize();
-      _cameraLensDirection = _cameraController.description.lensDirection;
+      Exception? lastError;
+      for (final preset in presets) {
+        for (final fmt in formats) {
+          try {
+            if (fmt == null) {
+              _cameraController = CameraController(
+                frontCamera,
+                preset,
+                enableAudio: false,
+              );
+            } else {
+              _cameraController = CameraController(
+                frontCamera,
+                preset,
+                enableAudio: false,
+                imageFormatGroup: fmt,
+              );
+            }
+            await _cameraController.initialize();
+            _cameraLensDirection = _cameraController.description.lensDirection;
+            lastError = null;
+            break;
+          } catch (e) {
+            lastError = e as Exception? ?? Exception(e.toString());
+            debugPrint('Camera init attempt failed (preset=$preset, fmt=$fmt): $e');
+            try {
+              await _cameraController.dispose();
+            } catch (_) {}
+          }
+        }
+        if (lastError == null) break;
+      }
+
+      if (lastError != null) throw lastError;
 
       // Initialize face detector
       _faceDetector = FaceDetector(
